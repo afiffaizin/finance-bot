@@ -1,0 +1,88 @@
+services:
+  # ── PostgreSQL Database ─────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: finance-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-finance_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-finance_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-finance_db}
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/migrations:/docker-entrypoint-initdb.d
+    networks:
+      - finance-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-finance_user} -d ${POSTGRES_DB:-finance_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── WA Listener (Baileys) ───────────────────────────
+  wa-listener:
+    build:
+      context: ./wa-listener
+      dockerfile: Dockerfile
+    container_name: finance-wa-listener
+    restart: unless-stopped
+    environment:
+      OWNER_WA_NUMBER: ${OWNER_WA_NUMBER}
+      BACKEND_URL: http://backend:3002
+      PORT: 3001
+    volumes:
+      - wa_auth_session:/app/auth_session
+    networks:
+      - finance-net
+    depends_on:
+      - backend
+
+  # ── Backend (Express + Gemini) ──────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: finance-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-finance_user}:${POSTGRES_PASSWORD:-finance_pass}@postgres:5432/${POSTGRES_DB:-finance_db}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      WA_LISTENER_URL: http://wa-listener:3001
+      PORT: 3002
+    ports:
+      - "${BACKEND_PORT:-3002}:3002"
+    networks:
+      - finance-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ── Dashboard (Next.js) ─────────────────────────────
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_BACKEND_URL: ${NEXT_PUBLIC_BACKEND_URL:-http://localhost:3002}
+    container_name: finance-dashboard
+    restart: unless-stopped
+    ports:
+      - "${DASHBOARD_PORT:-3000}:3000"
+    networks:
+      - finance-net
+    depends_on:
+      - backend
+
+# ── Volumes ─────────────────────────────────────────
+volumes:
+  postgres_data:
+    driver: local
+  wa_auth_session:
+    driver: local
+
+# ── Network ─────────────────────────────────────────
+networks:
+  finance-net:
+    driver: bridge
