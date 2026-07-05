@@ -10,22 +10,21 @@ Sistem pencatatan keuangan pribadi otomatis melalui WhatsApp. Kirim pesan sepert
 │  (Baileys)   │ ◄────────────────── │  (Express)   │
 │  wa-listener │   konfirmasi WA     │              │
 └──────────────┘                     └──────┬───────┘
-                                            │ SQL
-                                     ┌──────▼───────┐
-                                     │  PostgreSQL   │
-                                     │   Database    │
-                                     └──────┬───────┘
-                                            │ REST API
-                                     ┌──────▼───────┐
-                                     │  Dashboard   │
-                                     │  (Next.js)   │
-                                     └──────────────┘
+                                            │ SQL          ▲ REST API
+                                     ┌──────▼───────┐     │
+                                     │  PostgreSQL   │     │
+                                     │   Database    │     │
+                                     └──────────────┘     │
+                                                    ┌─────┴────────┐
+                                                    │  Dashboard   │
+                                                    │  (Next.js)   │
+                                                    └──────────────┘
 ```
 
 | Service | Tech | Port |
 |---------|------|------|
 | **wa-listener** | Node.js + Baileys | 3001 (internal) |
-| **backend** | Node.js + Express + Gemini | 3002 (internal) |
+| **backend** | Node.js + Express + Gemini | 3002 (exposed) |
 | **postgres** | PostgreSQL 16 | 5432 (internal) |
 | **dashboard** | Next.js + Tailwind + Recharts | 3000 (exposed) |
 
@@ -215,12 +214,6 @@ server {
 > ```bash
 > docker compose up -d --build dashboard
 > ```
-> Dan tambahkan port mapping backend di `docker-compose.yml`:
-> ```yaml
-> backend:
->   ports:
->     - "3002:3002"
-> ```
 
 #### Aktifkan Sites
 
@@ -356,22 +349,30 @@ docker compose exec -T postgres psql -U finance_user finance_db < database/migra
 
 ```
 BotKeuangan/
-├── docker-compose.yml          # Orchestrasi semua service
 ├── .env.example                # Template environment variables
+├── .gitignore                  # File/folder yang diabaikan git
+├── docker-compose.yml          # Orchestrasi semua service
 ├── README.md                   # Dokumentasi ini
+├── promt.md                    # Prompt referensi pembuatan project
 │
 ├── wa-listener/                # WhatsApp listener (Baileys)
+│   ├── .dockerignore
 │   ├── Dockerfile
 │   ├── package.json
+│   ├── package-lock.json
 │   └── src/
 │       ├── index.js            # Entry point
 │       ├── config.js           # Env loader
-│       ├── socket.js           # Baileys connection + message handler
+│       ├── socket.js           # Baileys connection + QR + message handler
 │       └── server.js           # Internal HTTP server (/internal/send)
 │
 ├── backend/                    # REST API (Express + Gemini)
+│   ├── .dockerignore
 │   ├── Dockerfile
 │   ├── package.json
+│   ├── package-lock.json
+│   ├── migrations/
+│   │   └── 001_init.sql        # Schema + indexes (untuk migrate.js)
 │   └── src/
 │       ├── index.js            # Entry point + middleware
 │       ├── config.js           # Env loader
@@ -383,31 +384,39 @@ BotKeuangan/
 │           ├── transactions.js # GET /api/transactions
 │           └── summary.js      # GET /api/summary
 │
-├── database/                   # SQL files
+├── database/                   # SQL files (auto-run saat postgres init)
 │   └── migrations/
 │       ├── 001_init.sql        # Schema + indexes
 │       └── 002_seed.sql        # Data dummy untuk testing
 │
 └── dashboard/                  # Web dashboard (Next.js)
+    ├── .dockerignore
+    ├── .gitignore
     ├── Dockerfile
-    ├── next.config.ts
+    ├── next.config.ts           # Next.js config (standalone output)
+    ├── postcss.config.mjs       # PostCSS + Tailwind v4
+    ├── tsconfig.json            # TypeScript config
     ├── package.json
+    ├── package-lock.json
+    ├── public/                  # Static assets
+    │   └── *.svg
     └── src/
         ├── app/
-        │   ├── layout.tsx
-        │   ├── page.tsx
-        │   └── globals.css
+        │   ├── favicon.ico
+        │   ├── globals.css      # Tailwind + custom styles
+        │   ├── layout.tsx       # Root layout (fonts, metadata)
+        │   └── page.tsx         # Halaman utama → Dashboard
         ├── components/
-        │   ├── Dashboard.tsx
-        │   ├── SummaryCards.tsx
-        │   ├── MonthlyChart.tsx
-        │   ├── CategoryPie.tsx
-        │   ├── TransactionTable.tsx
-        │   └── MonthPicker.tsx
+        │   ├── Dashboard.tsx     # Komponen utama (state, layout)
+        │   ├── SummaryCards.tsx   # 3 kartu: pemasukan, pengeluaran, saldo
+        │   ├── MonthPicker.tsx   # Dropdown pilih bulan
+        │   ├── MonthlyChart.tsx  # BarChart tren harian (Recharts)
+        │   ├── CategoryPie.tsx   # PieChart distribusi kategori
+        │   └── TransactionTable.tsx # Tabel transaksi + filter
         └── lib/
-            ├── api.ts
-            ├── types.ts
-            └── utils.ts
+            ├── api.ts           # Fetch functions (summary, transactions)
+            ├── types.ts         # TypeScript interfaces
+            └── utils.ts         # Format currency, date, warna kategori
 ```
 
 ---
@@ -422,6 +431,7 @@ BotKeuangan/
 | Dashboard kosong | Pastikan `NEXT_PUBLIC_BACKEND_URL` benar dan backend bisa diakses dari browser |
 | Gemini error | Cek `GEMINI_API_KEY` valid, cek kuota di [AI Studio](https://aistudio.google.com) |
 | Pesan WA tidak diproses | Pastikan `OWNER_WA_NUMBER` sesuai format `628xxx` tanpa `+` |
+| WA disconnect setelah scan QR | Normal — Baileys akan auto-reconnect setelah pairing pertama |
 
 ## Lisensi
 

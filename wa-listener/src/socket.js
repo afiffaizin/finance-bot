@@ -1,5 +1,6 @@
-import { makeWASocket, useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys';
+import makeWASocket, { useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys';
 import pino from 'pino';
+import QRCode from 'qrcode';
 import config from './config.js';
 
 let sock;
@@ -7,25 +8,32 @@ let sock;
 export async function connectWhatsApp() {
   const { state, saveCreds } = await useMultiFileAuthState('./auth_session');
 
-  // Some Baileys versions export makeWASocket differently in ESM
+  // Baileys v7 ESM default export
   const initSocket = typeof makeWASocket === 'function' ? makeWASocket : makeWASocket.default;
 
   sock = initSocket({
     auth: state,
-    printQRInTerminal: true,
     logger: pino({ level: 'silent' })
   });
 
-  sock.ev.on('connection.update', (update) => {
-    const { connection, lastDisconnect } = update;
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect, qr } = update;
+
+    // Render QR code di terminal saat login
+    if (qr) {
+      console.log('\n📱 Scan QR code berikut dengan WhatsApp:');
+      console.log(await QRCode.toString(qr, { type: 'terminal', small: true }));
+    }
+
     if (connection === 'close') {
-      const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-      console.log('Connection closed. Reconnecting:', shouldReconnect);
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+      console.log(`Connection closed (status: ${statusCode}). Reconnecting: ${shouldReconnect}`);
       if (shouldReconnect) {
         connectWhatsApp();
       }
     } else if (connection === 'open') {
-      console.log('✅ WA Listener connected to WhatsApp!');
+      console.log('✅ Terhubung ke WhatsApp!');
     }
   });
 

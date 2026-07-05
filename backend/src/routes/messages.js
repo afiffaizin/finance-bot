@@ -23,7 +23,7 @@ router.post('/', async (req, res) => {
     const parsed = await parseTransaction(message);
 
     // Cek apakah Gemini gagal atau pesan tidak dikenali
-    if (parsed.error) {
+    if (!parsed.is_transaction) {
       // Kirim balasan error ke WA
       const errorMsg =
         '❌ Format pesan tidak dikenali.\n\nContoh format yang benar:\n' +
