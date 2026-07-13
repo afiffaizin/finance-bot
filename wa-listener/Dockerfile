@@ -1,17 +1,36 @@
-FROM node:20-alpine
+# ── Stage 1: Dependencies ─────────────────────────
+FROM node:20-alpine AS deps
+WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN npm ci --omit=dev
 
+# ── Stage 2: Production ──────────────────────────
+FROM node:20-alpine AS runner
 WORKDIR /app
 
-# Copy package files dan install dependencies
-COPY package.json package-lock.json* ./
-RUN npm install --omit=dev
+# Install tini for proper PID 1 signal handling
+RUN apk add --no-cache tini curl
 
-# Copy source code
-COPY src/ ./src/
+ENV NODE_ENV=production
 
-# Volume untuk persistent auth session
+# Non-root user
+RUN addgroup --system --gid 1001 appgroup && \
+    adduser --system --uid 1001 appuser
+
+COPY --from=deps --chown=appuser:appgroup /app/node_modules ./node_modules
+COPY --chown=appuser:appgroup package.json ./
+COPY --chown=appuser:appgroup src/ ./src/
+
+# Auth session directory with correct ownership
+RUN mkdir -p /app/auth_session && chown appuser:appgroup /app/auth_session
 VOLUME ["/app/auth_session"]
+
+USER appuser
 
 EXPOSE 3001
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD curl -f http://localhost:3001/health || exit 1
+
+ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "src/index.js"]

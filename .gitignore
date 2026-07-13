@@ -1,7 +1,34 @@
+# ── Environment ──────────────────────────────────
 .env
+.env.local
+.env.*.local
+
+# ── Dependencies ─────────────────────────────────
 node_modules/
-auth_session/
+
+# ── Build artifacts ──────────────────────────────
 .next/
+dist/
+
+# ── Runtime data ─────────────────────────────────
+auth_session/
 backups/
+
+# ── SSL certificates ────────────────────────────
+nginx/ssl/*.pem
+nginx/ssl/*.key
+
+# ── Logs ─────────────────────────────────────────
 *.log
+logs/
+
+# ── OS files ─────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── IDE ──────────────────────────────────────────
+.vscode/
+.idea/
+
+# ── Project specific ────────────────────────────
 promt.md

@@ -1,3 +1,12 @@
+# ══════════════════════════════════════════════════════
+# BotKeuangan — Docker Compose (Production)
+# ══════════════════════════════════════════════════════
+# Usage:
+#   docker compose up -d --build
+#   docker compose logs -f
+#   docker compose down
+# ══════════════════════════════════════════════════════
+
 services:
   # ── PostgreSQL Database ─────────────────────────────
   postgres:
@@ -6,39 +15,31 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-finance_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-finance_pass}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD wajib diisi di .env}
       POSTGRES_DB: ${POSTGRES_DB:-finance_db}
-    # Port TIDAK di-expose ke host untuk keamanan. Jika perlu akses dari host, uncomment baris di bawah:
-    # ports:
-    #   - "5433:5432"
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./database/migrations:/docker-entrypoint-initdb.d
+      - ./database/migrations:/docker-entrypoint-initdb.d:ro
     networks:
-      - finance-net
+      - finance-internal
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-finance_user} -d ${POSTGRES_DB:-finance_db}"]
       interval: 10s
       timeout: 5s
       retries: 5
-
-  # ── WA Listener (Baileys) ───────────────────────────
-  wa-listener:
-    build:
-      context: ./wa-listener
-      dockerfile: Dockerfile
-    container_name: finance-wa-listener
-    restart: unless-stopped
-    environment:
-      OWNER_WA_NUMBER: ${OWNER_WA_NUMBER}
-      BACKEND_URL: http://backend:3002
-      PORT: 3001
-    volumes:
-      - wa_auth_session:/app/auth_session
-    networks:
-      - finance-net
-    depends_on:
-      - backend
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # ── Backend (Express + Gemini) ──────────────────────
   backend:
@@ -48,17 +49,57 @@ services:
     container_name: finance-backend
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-finance_user}:${POSTGRES_PASSWORD:-finance_pass}@postgres:5432/${POSTGRES_DB:-finance_db}
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-finance_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-finance_db}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:?GEMINI_API_KEY wajib diisi di .env}
       WA_LISTENER_URL: http://wa-listener:3001
       PORT: 3002
-    ports:
-      - "${BACKEND_PORT:-3002}:3002"
     networks:
-      - finance-net
+      - finance-internal
     depends_on:
       postgres:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ── WA Listener (Baileys) ───────────────────────────
+  wa-listener:
+    build:
+      context: ./wa-listener
+      dockerfile: Dockerfile
+    container_name: finance-wa-listener
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      OWNER_WA_NUMBER: ${OWNER_WA_NUMBER:?OWNER_WA_NUMBER wajib diisi di .env}
+      BACKEND_URL: http://backend:3002
+      PORT: 3001
+    volumes:
+      - wa_auth_session:/app/auth_session
+    networks:
+      - finance-internal
+    depends_on:
+      - backend
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
 
   # ── Dashboard (Next.js) ─────────────────────────────
   dashboard:
@@ -69,12 +110,76 @@ services:
         NEXT_PUBLIC_BACKEND_URL: ${NEXT_PUBLIC_BACKEND_URL:-http://localhost:3002}
     container_name: finance-dashboard
     restart: unless-stopped
-    ports:
-      - "${DASHBOARD_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
     networks:
-      - finance-net
+      - finance-internal
     depends_on:
       - backend
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── Nginx Reverse Proxy ─────────────────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: finance-nginx
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/templates:ro
+      - certbot_webroot:/var/www/certbot:ro
+      - certbot_certs:/etc/letsencrypt:ro
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+      API_DOMAIN: ${API_DOMAIN:-api.localhost}
+      NGINX_ENVSUBST_FILTER: "^(DOMAIN|API_DOMAIN)$"
+    networks:
+      - finance-internal
+    depends_on:
+      - dashboard
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+        reservations:
+          memory: 32M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ── Certbot (SSL Certificates) ──────────────────────
+  # Hanya dibutuhkan jika pakai domain + SSL
+  # Jalankan: docker compose run --rm certbot
+  certbot:
+    image: certbot/certbot:latest
+    container_name: finance-certbot
+    volumes:
+      - certbot_webroot:/var/www/certbot
+      - certbot_certs:/etc/letsencrypt
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do sleep 6h & wait $${!}; nginx -s reload; done'"
+    profiles:
+      - ssl
 
 # ── Volumes ─────────────────────────────────────────
 volumes:
@@ -82,8 +187,13 @@ volumes:
     driver: local
   wa_auth_session:
     driver: local
+  certbot_webroot:
+    driver: local
+  certbot_certs:
+    driver: local
 
 # ── Network ─────────────────────────────────────────
 networks:
-  finance-net:
+  finance-internal:
     driver: bridge
+    internal: false

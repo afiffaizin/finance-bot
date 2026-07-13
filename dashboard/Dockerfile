@@ -10,14 +10,10 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Set env untuk build
-ARG NEXT_PUBLIC_BACKEND_URL=http://backend:3002
+# Build-time env
+ARG NEXT_PUBLIC_BACKEND_URL=http://localhost:3002
 ENV NEXT_PUBLIC_BACKEND_URL=$NEXT_PUBLIC_BACKEND_URL
-
-# Disable telemetry
 ENV NEXT_TELEMETRY_DISABLED=1
-
-# Limit Node memory untuk build di Docker
 ENV NODE_OPTIONS="--max-old-space-size=1024"
 
 RUN npm run build
@@ -25,6 +21,9 @@ RUN npm run build
 # ── Stage 3: Production ──────────────────────────
 FROM node:20-alpine AS runner
 WORKDIR /app
+
+# Install tini + curl for healthcheck
+RUN apk add --no-cache tini curl
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -44,4 +43,8 @@ EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD curl -f http://localhost:3000/ || exit 1
+
+ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "server.js"]

@@ -5,111 +5,98 @@ Sistem pencatatan keuangan pribadi otomatis melalui WhatsApp. Kirim pesan sepert
 ## Arsitektur
 
 ```
-┌──────────────┐     HTTP POST      ┌──────────────┐     Gemini API
-│  WhatsApp    │ ──────────────────► │   Backend    │ ◄──────────────►  Google AI
-│  (Baileys)   │ ◄────────────────── │  (Express)   │
-│  wa-listener │   konfirmasi WA     │              │
-└──────────────┘                     └──────┬───────┘
-                                            │ SQL          ▲ REST API
-                                     ┌──────▼───────┐     │
-                                     │  PostgreSQL   │     │
-                                     │   Database    │     │
-                                     └──────────────┘     │
-                                                    ┌─────┴────────┐
-                                                    │  Dashboard   │
-                                                    │  (Next.js)   │
-                                                    └──────────────┘
+                    ┌─────────────────────────────────────────────┐
+                    │              Docker Compose                  │
+                    │                                             │
+┌──────────┐       │  ┌──────────┐    ┌──────────┐    ┌────────┐ │
+│ WhatsApp │◄─────►│  │  Nginx   │───►│Dashboard │    │Postgres│ │
+│   App    │       │  │ (Reverse │    │(Next.js) │    │  (DB)  │ │
+└──────────┘       │  │  Proxy)  │    └──────────┘    └───▲────┘ │
+                   │  │  :80/443 │                        │      │
+                   │  └────┬─────┘    ┌──────────┐        │      │
+                   │       │          │ Backend  │────────┘      │
+                   │       └─────────►│(Express) │               │
+                   │                  │ +Gemini  │               │
+                   │                  └────▲─────┘               │
+                   │                       │                     │
+                   │                  ┌────┴─────┐               │
+                   │                  │   WA     │               │
+                   │                  │ Listener │               │
+                   │                  │(Baileys) │               │
+                   │                  └──────────┘               │
+                   └─────────────────────────────────────────────┘
 ```
 
-| Service | Tech | Port |
-|---------|------|------|
-| **wa-listener** | Node.js + Baileys | 3001 (internal) |
-| **backend** | Node.js + Express + Gemini | 3002 (exposed) |
-| **postgres** | PostgreSQL 16 | 5432 (internal) |
-| **dashboard** | Next.js + Tailwind + Recharts | 3000 (exposed) |
+| Service | Tech | Port | Expose |
+|---------|------|------|--------|
+| **nginx** | Nginx 1.27 Alpine | 80/443 | ✅ Public |
+| **dashboard** | Next.js 16 + Tailwind + Recharts | 3000 | 🔒 Internal |
+| **backend** | Express + Gemini AI | 3002 | 🔒 Internal |
+| **wa-listener** | Baileys (WhatsApp Web) | 3001 | 🔒 Internal |
+| **postgres** | PostgreSQL 16 Alpine | 5432 | 🔒 Internal |
 
 ## Fitur
 
-- Kirim pesan WA → otomatis dicatat sebagai transaksi
-- Parsing cerdas via Google Gemini AI (support "20rb", "1jt", "500k", dll)
-- Balasan konfirmasi otomatis ke WhatsApp
-- Dashboard web: ringkasan saldo, grafik tren, pie chart kategori, tabel transaksi
-- Filter berdasarkan bulan, kategori, dan jenis transaksi
-- Hanya proses pesan dari nomor pemilik (aman)
-- Self-hosted, semua data di server sendiri
+- 💬 Kirim pesan WA → otomatis dicatat sebagai transaksi
+- 🤖 Parsing cerdas via Google Gemini AI (support "20rb", "1jt", "500k", dll)
+- 📤 Balasan konfirmasi otomatis ke WhatsApp
+- 📊 Dashboard web: ringkasan saldo, grafik tren, pie chart kategori, tabel transaksi
+- 🔒 Nginx reverse proxy + SSL/HTTPS support
+- 🐳 One-command Docker deploy
+- 💾 Auto-backup database harian
+- 🛡️ Security: non-root containers, rate limiting, security headers
 
 ## Prasyarat
 
-- **Server**: VM/LXC Ubuntu 22.04 di Proxmox (atau server Linux lainnya)
-- **Docker**: Docker Engine + Docker Compose terinstall
+- **Server**: VM/VPS Ubuntu 22.04+ (minimal 2 CPU, 2GB RAM, 20GB disk)
+- **Docker**: Docker Engine + Docker Compose V2
 - **Gemini API Key**: Gratis dari [Google AI Studio](https://aistudio.google.com/apikey)
-- **WhatsApp**: Nomor aktif untuk bot (akan di-scan QR)
+- **WhatsApp**: Nomor aktif untuk bot
 
 ---
 
-## Quick Start
+## Quick Start (5 menit)
 
-### 1. Clone Repository
+### 1. Clone & Konfigurasi
 
 ```bash
-cd /opt
 git clone https://github.com/username/BotKeuangan.git
 cd BotKeuangan
-```
 
-### 2. Konfigurasi Environment
-
-```bash
 cp .env.example .env
 nano .env
 ```
 
-Isi variabel berikut:
+Isi variabel wajib:
 
 ```env
-POSTGRES_PASSWORD=password_kuat_kamu
+POSTGRES_PASSWORD=password_kuat_kamu_disini
 GEMINI_API_KEY=AIzaSy...api_key_kamu
 OWNER_WA_NUMBER=628123456789
-NEXT_PUBLIC_BACKEND_URL=http://IP_SERVER:3002
 ```
 
-> **Penting:** `NEXT_PUBLIC_BACKEND_URL` harus URL yang bisa diakses oleh **browser** kamu (bukan internal Docker). Jika pakai reverse proxy, gunakan `https://api.domain-kamu.com`.
-
-### 3. Build & Jalankan
+### 2. Deploy
 
 ```bash
-docker compose up -d --build
+chmod +x deploy.sh
+sudo ./deploy.sh
 ```
 
-Proses build pertama kali bisa memakan waktu 3-5 menit.
+Selesai. Semua service akan berjalan di Docker.
 
-### 4. Scan QR Code WhatsApp
+### 3. Scan QR WhatsApp
 
 ```bash
 docker compose logs -f wa-listener
 ```
 
-Akan muncul QR code di terminal. Scan dengan WhatsApp di HP kamu:
-1. Buka WhatsApp → **Linked Devices** → **Link a Device**
-2. Scan QR code yang tampil di terminal
-3. Tunggu sampai muncul pesan `✅ Terhubung ke WhatsApp!`
-4. Tekan `Ctrl+C` untuk keluar dari log
+Scan QR code yang muncul di terminal via WhatsApp → **Linked Devices** → **Link a Device**.
 
-> Session tersimpan persisten di Docker volume. Tidak perlu scan ulang setelah restart.
+> Session tersimpan di Docker volume. Tidak perlu scan ulang setelah restart.
 
-### 5. Migrasi Database
+### 4. Test
 
-Database otomatis ter-migrasi saat container postgres pertama kali start (via file SQL di `docker-entrypoint-initdb.d`).
-
-Jika perlu migrasi manual:
-
-```bash
-docker compose exec backend node src/migrate.js
-```
-
-### 6. Test Kirim Pesan
-
-Kirim pesan WhatsApp ke nomor bot kamu sendiri:
+Kirim pesan WA ke nomor bot:
 
 ```
 keluar 25rb makan siang nasi padang
@@ -125,222 +112,115 @@ Bot akan membalas:
 📅 Tanggal: 2025-06-15
 ```
 
-### 7. Buka Dashboard
+### 5. Buka Dashboard
 
-Buka browser: `http://IP_SERVER:3000`
+```
+http://IP_SERVER
+```
 
 ---
 
-## Deployment ke Proxmox
+## Deployment Production (dengan Domain + SSL)
 
-### Setup VM/LXC
+### 1. Setup DNS
 
-1. Buat VM atau LXC container Ubuntu 22.04 di Proxmox
-2. Alokasikan minimal: 2 CPU, 2GB RAM, 20GB disk
-3. Install Docker:
+Arahkan domain ke IP server:
+
+```
+finance-bot.domain.com     → A → IP_SERVER
+api.finance-bot.domain.com → A → IP_SERVER
+```
+
+### 2. Update .env
+
+```env
+DOMAIN=finance-bot.domain.com
+API_DOMAIN=api.finance-bot.domain.com
+NEXT_PUBLIC_BACKEND_URL=https://api.finance-bot.domain.com
+```
+
+### 3. Deploy + SSL
 
 ```bash
-# Update system
-sudo apt update && sudo apt upgrade -y
-
-# Install Docker
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER
-
-# Install Docker Compose plugin
-sudo apt install docker-compose-plugin -y
-
-# Logout dan login ulang agar group docker aktif
+sudo ./deploy.sh           # Deploy dulu
+sudo ./deploy.sh --ssl     # Setup SSL certificate
 ```
 
-### Setup Reverse Proxy (Nginx)
-
-Supaya dashboard dan API bisa diakses via domain dengan HTTPS:
-
-#### Install Nginx
-
-```bash
-sudo apt install nginx -y
-```
-
-#### Konfigurasi Dashboard
-
-```bash
-sudo nano /etc/nginx/sites-available/finance-dashboard
-```
-
-```nginx
-server {
-    listen 80;
-    server_name dashboard.domain-kamu.com;
-
-    location / {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_cache_bypass $http_upgrade;
-    }
-}
-```
-
-#### Konfigurasi Backend API
-
-```bash
-sudo nano /etc/nginx/sites-available/finance-api
-```
-
-```nginx
-server {
-    listen 80;
-    server_name api.domain-kamu.com;
-
-    location / {
-        proxy_pass http://127.0.0.1:3002;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-> **Catatan:** Jika expose backend via reverse proxy, update `NEXT_PUBLIC_BACKEND_URL` di `.env` ke `https://api.domain-kamu.com`, lalu rebuild dashboard:
-> ```bash
-> docker compose up -d --build dashboard
-> ```
-
-#### Aktifkan Sites
-
-```bash
-sudo ln -s /etc/nginx/sites-available/finance-dashboard /etc/nginx/sites-enabled/
-sudo ln -s /etc/nginx/sites-available/finance-api /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl reload nginx
-```
-
-#### HTTPS dengan Let's Encrypt
-
-```bash
-sudo apt install certbot python3-certbot-nginx -y
-sudo certbot --nginx -d dashboard.domain-kamu.com -d api.domain-kamu.com
-```
-
-Certbot otomatis renew via systemd timer.
-
-### Alternatif: Nginx Proxy Manager
-
-Jika lebih suka GUI, gunakan [Nginx Proxy Manager](https://nginxproxymanager.com/):
-
-```bash
-# Tambahkan di docker-compose.yml atau jalankan terpisah
-docker run -d \
-  --name nginx-proxy-manager \
-  --restart unless-stopped \
-  -p 80:80 -p 443:443 -p 81:81 \
-  --network finance-net \
-  jc21/nginx-proxy-manager:latest
-```
-
-Akses di `http://IP_SERVER:81`, login default: `admin@example.com` / `changeme`.
-
-Buat Proxy Host:
-- **dashboard.domain-kamu.com** → `finance-dashboard:3000`
-- **api.domain-kamu.com** → `finance-backend:3002`
-- Aktifkan SSL dengan Let's Encrypt
+SSL certificate auto-renew via cron job.
 
 ---
 
-## Backup Database
+## Perintah Berguna (Makefile)
+
+```bash
+make help              # Tampilkan semua perintah
+make up                # Start semua service
+make down              # Stop semua service
+make restart           # Restart semua service
+make status            # Cek status container
+make logs              # Lihat semua log (follow)
+make logs-wa           # Lihat log wa-listener (scan QR)
+make logs-backend      # Lihat log backend
+make health            # Cek health semua service
+make backup            # Backup database
+make restore           # Restore dari backup
+make migrate           # Jalankan migrasi database
+make seed              # Load data dummy
+make shell-db          # Masuk PostgreSQL shell
+make shell-backend     # Masuk shell backend
+make ssl               # Setup SSL
+make ssl-renew         # Renew SSL certificate
+make clean             # Hapus container + images (data aman)
+make clean-all         # ⚠️ Hapus SEMUA termasuk data
+```
+
+Atau langsung pakai Docker Compose:
+
+```bash
+docker compose ps                          # Status
+docker compose logs -f backend             # Log backend
+docker compose exec postgres psql -U finance_user finance_db  # SQL shell
+docker compose up -d --build               # Rebuild & restart
+docker compose down                        # Stop
+```
+
+---
+
+## Deploy Script
+
+```bash
+./deploy.sh              # Deploy (HTTP mode)
+./deploy.sh --ssl        # Deploy + Setup SSL
+./deploy.sh --update     # Rebuild & restart
+./deploy.sh --backup     # Backup database
+./deploy.sh --restore    # Restore database
+./deploy.sh --help       # Help
+```
+
+---
+
+## Backup & Restore
 
 ### Manual Backup
 
 ```bash
-docker compose exec postgres pg_dump -U finance_user finance_db > backup_$(date +%Y%m%d_%H%M%S).sql
+make backup
+# atau
+./backup.sh
 ```
 
-### Restore dari Backup
+File backup tersimpan di `backups/finance_db_YYYYMMDD_HHMMSS.sql.gz`
+
+### Auto-Backup
+
+Deploy script otomatis setup cron job: backup setiap hari jam 03:00. Backup >30 hari otomatis dihapus.
+
+### Restore
 
 ```bash
-docker compose exec -T postgres psql -U finance_user finance_db < backup_20250615_120000.sql
-```
-
-### Automated Backup (Cron Job)
-
-Buat script backup:
-
-```bash
-sudo nano /opt/BotKeuangan/backup.sh
-```
-
-```bash
-#!/bin/bash
-BACKUP_DIR="/opt/BotKeuangan/backups"
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-mkdir -p "$BACKUP_DIR"
-
-# Dump database
-docker compose -f /opt/BotKeuangan/docker-compose.yml exec -T postgres \
-  pg_dump -U finance_user finance_db | gzip > "$BACKUP_DIR/finance_db_$TIMESTAMP.sql.gz"
-
-# Hapus backup lebih dari 30 hari
-find "$BACKUP_DIR" -name "*.sql.gz" -mtime +30 -delete
-
-echo "Backup selesai: finance_db_$TIMESTAMP.sql.gz"
-```
-
-```bash
-chmod +x /opt/BotKeuangan/backup.sh
-```
-
-Tambahkan cron job (backup setiap hari jam 3 pagi):
-
-```bash
-crontab -e
-```
-
-```cron
-0 3 * * * /opt/BotKeuangan/backup.sh >> /var/log/finance-backup.log 2>&1
-```
-
----
-
-## Perintah Berguna
-
-```bash
-# Lihat status semua service
-docker compose ps
-
-# Lihat log service tertentu
-docker compose logs -f backend
-docker compose logs -f wa-listener
-
-# Restart service tertentu
-docker compose restart backend
-
-# Rebuild & restart semua
-docker compose up -d --build
-
-# Stop semua service
-docker compose down
-
-# Stop dan hapus volume (⚠️ data hilang!)
-docker compose down -v
-
-# Masuk ke shell container
-docker compose exec backend sh
-docker compose exec postgres psql -U finance_user finance_db
-
-# Jalankan migrasi manual
-docker compose exec backend node src/migrate.js
-
-# Load seed data
-docker compose exec -T postgres psql -U finance_user finance_db < database/migrations/002_seed.sql
+make restore
+# atau
+./deploy.sh --restore
 ```
 
 ---
@@ -349,74 +229,57 @@ docker compose exec -T postgres psql -U finance_user finance_db < database/migra
 
 ```
 BotKeuangan/
-├── .env.example                # Template environment variables
-├── .gitignore                  # File/folder yang diabaikan git
-├── docker-compose.yml          # Orchestrasi semua service
-├── README.md                   # Dokumentasi ini
-├── promt.md                    # Prompt referensi pembuatan project
+├── .env.example              # Template environment variables
+├── .gitignore                # Git ignore rules
+├── docker-compose.yml        # Docker Compose (production)
+├── deploy.sh                 # One-command deploy script
+├── backup.sh                 # Database backup script
+├── Makefile                  # Shortcut commands
+├── README.md                 # Dokumentasi ini
 │
-├── wa-listener/                # WhatsApp listener (Baileys)
-│   ├── .dockerignore
+├── nginx/                    # Nginx reverse proxy config
+│   ├── nginx.conf            # Main nginx config
+│   └── conf.d/
+│       ├── default.conf.template   # HTTP proxy config
+│       └── ssl.conf.template       # HTTPS proxy config
+│
+├── wa-listener/              # WhatsApp listener (Baileys)
 │   ├── Dockerfile
+│   ├── .dockerignore
 │   ├── package.json
-│   ├── package-lock.json
 │   └── src/
-│       ├── index.js            # Entry point
-│       ├── config.js           # Env loader
-│       ├── socket.js           # Baileys connection + QR + message handler
-│       └── server.js           # Internal HTTP server (/internal/send)
+│       ├── index.js
+│       ├── config.js
+│       ├── socket.js
+│       └── server.js
 │
-├── backend/                    # REST API (Express + Gemini)
-│   ├── .dockerignore
+├── backend/                  # REST API (Express + Gemini)
 │   ├── Dockerfile
+│   ├── .dockerignore
 │   ├── package.json
-│   ├── package-lock.json
 │   ├── migrations/
-│   │   └── 001_init.sql        # Schema + indexes (untuk migrate.js)
 │   └── src/
-│       ├── index.js            # Entry point + middleware
-│       ├── config.js           # Env loader
-│       ├── db.js               # PostgreSQL pool
-│       ├── gemini.js           # Gemini AI structured output
-│       ├── migrate.js          # Migration runner
+│       ├── index.js
+│       ├── config.js
+│       ├── db.js
+│       ├── gemini.js
+│       ├── migrate.js
 │       └── routes/
-│           ├── messages.js     # POST /api/messages
-│           ├── transactions.js # GET /api/transactions
-│           └── summary.js      # GET /api/summary
 │
-├── database/                   # SQL files (auto-run saat postgres init)
+├── database/                 # SQL migrations (auto-run)
 │   └── migrations/
-│       ├── 001_init.sql        # Schema + indexes
-│       └── 002_seed.sql        # Data dummy untuk testing
+│       ├── 001_init.sql
+│       └── 002_seed.sql
 │
-└── dashboard/                  # Web dashboard (Next.js)
-    ├── .dockerignore
-    ├── .gitignore
+└── dashboard/                # Web dashboard (Next.js)
     ├── Dockerfile
-    ├── next.config.ts           # Next.js config (standalone output)
-    ├── postcss.config.mjs       # PostCSS + Tailwind v4
-    ├── tsconfig.json            # TypeScript config
+    ├── .dockerignore
+    ├── next.config.ts
     ├── package.json
-    ├── package-lock.json
-    ├── public/                  # Static assets
-    │   └── *.svg
     └── src/
         ├── app/
-        │   ├── favicon.ico
-        │   ├── globals.css      # Tailwind + custom styles
-        │   ├── layout.tsx       # Root layout (fonts, metadata)
-        │   └── page.tsx         # Halaman utama → Dashboard
         ├── components/
-        │   ├── Dashboard.tsx     # Komponen utama (state, layout)
-        │   ├── SummaryCards.tsx   # 3 kartu: pemasukan, pengeluaran, saldo
-        │   ├── MonthPicker.tsx   # Dropdown pilih bulan
-        │   ├── MonthlyChart.tsx  # BarChart tren harian (Recharts)
-        │   ├── CategoryPie.tsx   # PieChart distribusi kategori
-        │   └── TransactionTable.tsx # Tabel transaksi + filter
         └── lib/
-            ├── api.ts           # Fetch functions (summary, transactions)
-            ├── types.ts         # TypeScript interfaces
-            └── utils.ts         # Format currency, date, warna kategori
 ```
 
 ---
@@ -426,12 +289,42 @@ BotKeuangan/
 | Problem | Solusi |
 |---------|--------|
 | QR code tidak muncul | `docker compose logs -f wa-listener` — tunggu beberapa detik |
-| Harus scan QR ulang setelah restart | Pastikan volume `wa_auth_session` terpasang |
-| Backend error 500 | Cek `docker compose logs backend` — biasanya DB belum ready |
-| Dashboard kosong | Pastikan `NEXT_PUBLIC_BACKEND_URL` benar dan backend bisa diakses dari browser |
-| Gemini error | Cek `GEMINI_API_KEY` valid, cek kuota di [AI Studio](https://aistudio.google.com) |
-| Pesan WA tidak diproses | Pastikan `OWNER_WA_NUMBER` sesuai format `628xxx` tanpa `+` |
-| WA disconnect setelah scan QR | Normal — Baileys akan auto-reconnect setelah pairing pertama |
+| Harus scan QR ulang | Pastikan volume `wa_auth_session` terpasang |
+| Backend error 500 | `make logs-backend` — biasanya DB belum ready |
+| Dashboard kosong | Cek `NEXT_PUBLIC_BACKEND_URL` di `.env` benar |
+| Gemini error | Cek `GEMINI_API_KEY` valid di [AI Studio](https://aistudio.google.com) |
+| Pesan WA tidak diproses | Pastikan `OWNER_WA_NUMBER` format `628xxx` tanpa `+` |
+| Port 80 sudah dipakai | Ganti `HTTP_PORT=8080` di `.env` |
+| Nginx 502 Bad Gateway | Service belum ready — tunggu 30 detik atau `make restart` |
+| SSL gagal | Pastikan DNS sudah pointing dan port 80/443 terbuka |
+
+### Reset Total
+
+```bash
+# Stop semua & hapus data (⚠️ database hilang!)
+docker compose down -v
+
+# Deploy ulang dari awal
+sudo ./deploy.sh
+```
+
+---
+
+## Security Checklist
+
+- [x] Non-root containers (backend, wa-listener, dashboard)
+- [x] Internal network — hanya Nginx yang exposed
+- [x] Rate limiting (API + Nginx)
+- [x] Security headers (X-Frame-Options, X-Content-Type-Options, etc.)
+- [x] Gzip compression
+- [x] Nginx server token hidden
+- [x] Docker resource limits (memory)
+- [x] Log rotation (max 10MB × 5 files)
+- [x] PostgreSQL SCRAM-SHA-256 auth
+- [x] Environment variable validation
+- [x] SSL/HTTPS ready
+
+---
 
 ## Lisensi
 
